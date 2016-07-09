@@ -1,0 +1,46 @@
+apply plugin: 'java'
+
+String getMyVersionName() {
+    def stdout = new ByteArrayOutputStream()
+    if (rootProject.file("gradlew").exists())
+        exec { commandLine 'git', 'describe', '--tags', '--always', '--dirty'; standardOutput = stdout }
+    else // automatic build system, don't tag dirty
+        exec { commandLine 'git', 'describe', '--tags', '--always'; standardOutput = stdout }
+    return stdout.toString().trim().substring(1)
+}
+
+group = "org.microg"
+version = getMyVersionName();
+
+repositories {
+    jcenter()
+}
+
+dependencies {
+    compile 'org.yaml:snakeyaml:1.17'
+    testCompile 'junit:junit:4.12'
+}
+
+void createListing(String dirname) {
+    File dir = project.file(dirname)
+    File target = new File(dir, "index.list")
+    dir.eachFile {
+        if (!it.name.equals("index.list"))
+            target.append(it.name + (it.isDirectory() ? "/\n" : "\n"))
+    }
+}
+
+processResources.doLast {
+    createListing("build/resources/main/org/microg/address/conf/countries")
+}
+
+processTestResources.doLast {
+    createListing("build/resources/test/org/microg/address/testcases/countries")
+}
+
+sourceCompatibility = JavaVersion.VERSION_1_6
+
+if (file('user.gradle').exists()) {
+    apply from: 'user.gradle'
+}
+
