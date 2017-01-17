@@ -18,40 +18,35 @@ package org.microg.address;
 
 import org.junit.Assert;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.io.IOException;
-import java.util.Collection;
+import java.util.HashMap;
 import java.util.Map;
 
-@RunWith(Parameterized.class)
 public class FormatterTest {
 
-    private String testFile;
-    private String tag;
-
-    @Parameterized.Parameters
-    public static Collection<String> test() throws IOException {
-        return Formatter.findFilesInPath("org/microg/address/testcases/countries", "*.yaml");
-    }
-
-    public FormatterTest(String testFile) {
-        this.testFile = testFile;
-        this.tag = testFile.substring(testFile.lastIndexOf("/") + 1, testFile.length() - 5);
+    private static Map<String, String> getTourEiffel3eEtageComponents() {
+        Map<String, String> components = new HashMap<String, String>();
+        components.put("viewpoint", "Tour Eiffel 3e étage");
+        components.put("road", "Avenue Gustave Eiffel");
+        components.put("suburb", "Gros-Caillou");
+        components.put("city_district", "7th Arrondissement");
+        components.put("city", "Paris");
+        components.put("county", "Paris");
+        components.put("state", "Ile-de-France");
+        components.put("country", "France");
+        components.put("postcode", "75007");
+        components.put("country_code", "fr");
+        return components;
     }
 
     @Test
-    public void integrationTestCase() throws IOException {
-        Formatter formatter = new Formatter();
-        for (Object o : Formatter.loadFile(testFile)) {
-            Map testCase = (Map) o;
-            Map<String, String> components = (Map<String, String>) testCase.get("components");
-            String description = (String) testCase.get("description");
-            String expected = ((String) testCase.get("expected")).trim();
-            String actual = formatter.formatAddress(components);
-            Assert.assertEquals("[" + tag + "] " + description, expected.replace("\n", "|"), actual.replace("\n", "|"));
-            Assert.assertEquals(description, expected, actual);
-        }
+    public void testGuessNameSpecialBuilding() throws IOException {
+        Assert.assertEquals("Tour Eiffel 3e étage", new Formatter().guessName(getTourEiffel3eEtageComponents()));
+    }
+
+    @Test
+    public void testGuessTypeCandidatesSpecialBuilding() throws IOException {
+        Assert.assertTrue(new Formatter().guessTypeCandidates(getTourEiffel3eEtageComponents()).contains("viewpoint"));
     }
 }

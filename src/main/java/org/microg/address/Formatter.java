@@ -36,6 +36,16 @@ public class Formatter {
 
     private static final Pattern VAR_PATTERN = Pattern.compile(".*\\$(\\w*).*");
 
+    private static final String COMPONENT_ATTENTION = "attention";
+    private static final String COMPONENT_COUNTRY = "country";
+    private static final String COMPONENT_COUNTRY_CODE = "country_code";
+    private static final String COMPONENT_POSTCODE = "postcode";
+    private static final String COMPONENT_ROAD = "road";
+    private static final String COMPONENT_STATE = "state";
+    private static final String COMPONENT_STATE_CODE = "state_code";
+
+    private static final String TEMPLATE_DEFAULT = "default";
+
     private final String path;
     private Map<String, Template> templates;
     private Map<String, String> componentAliases;
@@ -51,14 +61,49 @@ public class Formatter {
         readConfiguration();
     }
 
+    public String guessName(Map<String, String> components) {
+        components = ensureValidMap(components);
+        prepareRendering(components);
+
+        return components.get(COMPONENT_ATTENTION);
+    }
+
+    public List<String> guessTypeCandidates(Map<String, String> components) {
+        components = ensureValidMap(components);
+        sanitizeComponents(components);
+        return findUnknownComponents(components);
+    }
+
     public String formatAddress(Map<String, String> components) {
-        components = new HashMap<String, String>(components);
-        for (String key : components.keySet()) {
-            components.put(key, String.valueOf(components.get(key)));
+        components = ensureValidMap(components);
+        Template config = prepareRendering(components);
+
+        String rendered = renderTemplate(components, chooseAddressTemplate(components, config));
+
+        for (Template.Replacement replacement : config.postformatReplace()) {
+            rendered = rendered.replaceAll(replacement.getFrom(), replacement.getTo());
         }
 
+        return clean(rendered);
+    }
+
+    private Template prepareRendering(Map<String, String> components) {
+        sanitizeComponents(components);
+        Template config = selectTemplateFromCountryCode(components.get(COMPONENT_COUNTRY_CODE));
+
+        applyReplacements(components, config.replace());
+        addStateCode(components);
+        configureAttention(components);
+        return config;
+    }
+
+    private Template selectTemplateFromCountryCode(String cc) {
+        return templates.containsKey(cc) ? templates.get(cc) : templates.get(TEMPLATE_DEFAULT);
+    }
+
+    private void sanitizeComponents(Map<String, String> components) {
         String cc = determineCountryCode(components);
-        if (cc != null) components.put("country_code", cc);
+        if (cc != null) components.put(COMPONENT_COUNTRY_CODE, cc);
 
         for (String alias : componentAliases.keySet()) {
             if (components.containsKey(alias) && !components.containsKey(componentAliases.get(alias))) {
@@ -67,24 +112,10 @@ public class Formatter {
         }
 
         sanityCleaning(components);
-
-        Template config = templates.containsKey(cc) ? templates.get(cc) : templates.get("default");
-        String template = config.addressTemplate();
-
-        if (!minimalComponents(components)) {
-            if (config.fallbackTemplate() != null) {
-                template = config.fallbackTemplate();
-            } else if (templates.get("default").fallbackTemplate() != null) {
-                template = templates.get("default").fallbackTemplate();
-            }
-        }
-
-        template.replace("\r\n", "\n");
-
         fixCountry(components);
-        applyReplacements(components, config.replace());
-        addStateCode(components);
+    }
 
+    private void configureAttention(Map<String, String> components) {
         List<String> unknown = findUnknownComponents(components);
         if (!unknown.isEmpty()) {
             StringBuilder sb = new StringBuilder();
@@ -92,16 +123,30 @@ public class Formatter {
                 if (sb.length() != 0) sb.append(", ");
                 sb.append(components.get(s));
             }
-            components.put("attention", sb.toString());
+            components.put(COMPONENT_ATTENTION, sb.toString());
+        }
+    }
+
+    private String chooseAddressTemplate(Map<String, String> components, Template config) {
+        String template = config.addressTemplate();
+
+        if (!minimalComponents(components)) {
+            if (config.fallbackTemplate() != null) {
+                template = config.fallbackTemplate();
+            } else if (templates.get(TEMPLATE_DEFAULT).fallbackTemplate() != null) {
+                template = templates.get(TEMPLATE_DEFAULT).fallbackTemplate();
+            }
         }
 
-        String rendered = renderTemplate(components, template);
+        return template.replace("\r\n", "\n");
+    }
 
-        for (Template.Replacement replacement : config.postformatReplace()) {
-            rendered = rendered.replaceAll(replacement.getFrom(), replacement.getTo());
+    private Map<String, String> ensureValidMap(Map<String, String> components) {
+        components = new HashMap<String, String>(components);
+        for (String key : components.keySet()) {
+            components.put(key, String.valueOf(components.get(key)));
         }
-
-        return clean(rendered);
+        return components;
     }
 
     private String clean(String in) {
@@ -113,7 +158,8 @@ public class Formatter {
         for (int i = 0; i < lines.length; i++) {
             String line = lines[i].trim();
             while (line.startsWith(",") || line.startsWith("-")) line = line.substring(1).trim();
-            while (line.endsWith(",") || line.endsWith("-")) line = line.substring(0, line.length() - 1).trim();
+            while (line.endsWith(",") || line.endsWith("-"))
+                line = line.substring(0, line.length() - 1).trim();
             if (!prevlines.contains(line) && !line.isEmpty()) {
                 String[] split1 = line.split(",");
                 StringBuilder sb2 = new StringBuilder();
@@ -162,9 +208,9 @@ public class Formatter {
     }
 
     private void sanityCleaning(Map<String, String> components) {
-        if (components.containsKey("postcode")) {
-            if (components.get("postcode").length() > 20 || Pattern.compile("\\d+;\\d+").matcher(components.get("postcode")).matches())
-            components.remove("postcode");
+        if (components.containsKey(COMPONENT_POSTCODE)) {
+            if (components.get(COMPONENT_POSTCODE).length() > 20 || Pattern.compile("\\d+;\\d+").matcher(components.get(COMPONENT_POSTCODE)).matches())
+                components.remove(COMPONENT_POSTCODE);
         }
 
         for (String key : new HashSet<String>(components.keySet())) {
@@ -183,7 +229,7 @@ public class Formatter {
     }
 
     private boolean minimalComponents(Map<String, String> components) {
-        String[] requiredComponents = new String[]{"road", "postcode"};
+        String[] requiredComponents = new String[]{COMPONENT_ROAD, COMPONENT_POSTCODE};
         int missing = 0;
         int minimalThreshold = 2;
 
@@ -195,17 +241,17 @@ public class Formatter {
     }
 
     private void addStateCode(Map<String, String> components) {
-        if (components.containsKey("state_code")) return;
-        if (!components.containsKey("state")) return;
-        if (!components.containsKey("country_code")) return;
+        if (components.containsKey(COMPONENT_STATE_CODE)) return;
+        if (!components.containsKey(COMPONENT_STATE)) return;
+        if (!components.containsKey(COMPONENT_COUNTRY_CODE)) return;
 
-        components.put("country_code", components.get("country_code").toUpperCase());
+        components.put(COMPONENT_COUNTRY_CODE, components.get(COMPONENT_COUNTRY_CODE).toUpperCase());
 
-        Map<String, String> mapping = stateCodes.get(components.get("country_code"));
+        Map<String, String> mapping = stateCodes.get(components.get(COMPONENT_COUNTRY_CODE));
         if (mapping != null) {
             for (Object s : mapping.keySet()) {
-                if (components.get("state").toUpperCase().equals(mapping.get(s).toUpperCase())) {
-                    components.put("state_code", String.valueOf(s));
+                if (components.get(COMPONENT_STATE).toUpperCase().equals(mapping.get(s).toUpperCase())) {
+                    components.put(COMPONENT_STATE_CODE, String.valueOf(s));
                 }
             }
         }
@@ -226,19 +272,19 @@ public class Formatter {
     }
 
     private void fixCountry(Map<String, String> components) {
-        if (components.containsKey("country") && components.containsKey("state")) {
+        if (components.containsKey(COMPONENT_COUNTRY) && components.containsKey(COMPONENT_STATE)) {
             try {
-                Integer.parseInt(components.get("country"));
-                components.put("country", components.get("state"));
-                components.remove("state");
+                Integer.parseInt(components.get(COMPONENT_COUNTRY));
+                components.put(COMPONENT_COUNTRY, components.get(COMPONENT_STATE));
+                components.remove(COMPONENT_STATE);
             } catch (NumberFormatException ignored) {
             }
         }
     }
 
     private String determineCountryCode(Map<String, String> components) {
-        if (!components.containsKey("country_code")) return null;
-        String cc = components.get("country_code").toUpperCase();
+        if (!components.containsKey(COMPONENT_COUNTRY_CODE)) return null;
+        String cc = components.get(COMPONENT_COUNTRY_CODE).toUpperCase();
         if (cc.length() != 2) return null;
         if (cc.equals("UK")) return "GB";
         if (templates.containsKey(cc) && templates.get(cc).useCountry() != null) {
@@ -251,7 +297,7 @@ public class Formatter {
                     String component = matcher.group(1);
                     newCountry = newCountry.replace("$" + component, components.get(component));
                 }
-                components.put("country", newCountry);
+                components.put(COMPONENT_COUNTRY, newCountry);
             }
             if (templates.get(oldcc).addComponent() != null) {
                 String[] split = templates.get(oldcc).addComponent().split("=");
@@ -260,18 +306,18 @@ public class Formatter {
         }
 
         if (cc.equals("NL")) {
-            if (components.containsKey("state")) {
-                if (components.get("state").equals("Curaçao")) {
+            if (components.containsKey(COMPONENT_STATE)) {
+                if (components.get(COMPONENT_STATE).equals("Curaçao")) {
                     cc = "CW";
-                    components.put("country", "Curaçao");
+                    components.put(COMPONENT_COUNTRY, "Curaçao");
                 }
-                if (components.get("state").equalsIgnoreCase("sint maarten")) {
+                if (components.get(COMPONENT_STATE).equalsIgnoreCase("sint maarten")) {
                     cc = "SX";
-                    components.put("country", "Sint Maarten");
+                    components.put(COMPONENT_COUNTRY, "Sint Maarten");
                 }
-                if (components.get("state").equalsIgnoreCase("Aruba")) {
+                if (components.get(COMPONENT_STATE).equalsIgnoreCase("Aruba")) {
                     cc = "AW";
-                    components.put("country", "Aruba");
+                    components.put(COMPONENT_COUNTRY, "Aruba");
                 }
             }
         }
