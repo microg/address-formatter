@@ -27,7 +27,7 @@ repositories {
 }
 
 dependencies {
-    compile 'org.yaml:snakeyaml:1.17'
+    compile 'org.yaml:snakeyaml:1.18:android'
     testCompile 'junit:junit:4.12'
 }
 
