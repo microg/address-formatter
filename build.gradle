@@ -9,6 +9,8 @@ buildscript {
 
 apply plugin: 'java'
 apply plugin: 'jacoco'
+apply plugin: 'maven-publish'
+apply plugin: 'signing'
 
 String getMyVersionName() {
     def stdout = new ByteArrayOutputStream()
@@ -27,8 +29,8 @@ repositories {
 }
 
 dependencies {
-    compile 'org.yaml:snakeyaml:1.18:android'
-    testCompile 'junit:junit:4.12'
+    implementation 'org.yaml:snakeyaml:1.30'
+    testImplementation 'junit:junit:4.12'
 }
 
 void createListing(String dirname) {
@@ -50,8 +52,6 @@ processTestResources.doLast {
 
 jacocoTestReport {
     dependsOn test
-    sourceDirectories = project.files(sourceSets.main.allSource.srcDirs)
-    classDirectories = project.files(sourceSets.main.output)
     reports {
         xml.enabled true
     }
@@ -68,3 +68,74 @@ if (file('user.gradle').exists()) {
     apply from: 'user.gradle'
 }
 
+task javaSourcesJar(type: Jar) {
+    archiveClassifier.set("sources")
+    from sourceSets.main.allJava
+}
+
+javadoc {
+    classpath = configurations.compileClasspath
+    source = sourceSets.main.allJava
+}
+
+task javaJavadocsJar(type: Jar) {
+    archiveClassifier.set("javadoc")
+    from javadoc
+}
+
+artifacts {
+    archives javaSourcesJar
+    archives javaJavadocsJar
+}
+
+afterEvaluate {
+    publishing {
+        publications {
+            release(MavenPublication) {
+                pom {
+                    name = project.name
+                    description = project.description
+                    url = 'https://github.com/microg/address-formatting'
+                    licenses {
+                        license {
+                            name = 'The Apache Software License, Version 2.0'
+                            url = 'http://www.apache.org/licenses/LICENSE-2.0.txt'
+                        }
+                    }
+                    developers {
+                        developer {
+                            id = 'microg'
+                            name = 'microG Team'
+                        }
+                    }
+                    scm {
+                        url = 'https://github.com/microg/address-formatting'
+                        connection = 'scm:git:https://github.com/microg/address-formatting.git'
+                        developerConnection = 'scm:git:ssh://github.com/microg/address-formatting.git'
+                    }
+                }
+
+                from components.java
+                artifact javaSourcesJar
+                artifact javaJavadocsJar
+            }
+        }
+        if (project.hasProperty('sonatype.username')) {
+            repositories {
+                maven {
+                    name = 'sonatype'
+                    url = 'https://oss.sonatype.org/service/local/staging/deploy/maven2/'
+                    credentials {
+                        username project.getProperty('sonatype.username')
+                        password project.getProperty('sonatype.password')
+                    }
+                }
+            }
+        }
+    }
+    if (project.hasProperty('signing.keyId')) {
+        signing {
+            sign publishing.publications
+        }
+    }
+}

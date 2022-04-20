@@ -17,17 +17,16 @@
 package org.microg.address;
 
 import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.Construct;
+import org.yaml.snakeyaml.constructor.SafeConstructor;
+import org.yaml.snakeyaml.nodes.Node;
+import org.yaml.snakeyaml.nodes.Tag;
 
 import java.io.ByteArrayOutputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -35,10 +34,15 @@ public class Formatter {
     public static final String DEFAULT_PATH = "org/microg/address/conf";
 
     private static final Pattern VAR_PATTERN = Pattern.compile(".*\\$(\\w*).*");
+    private static final List<String> SMALL_DISTRICTS = Arrays.asList("BR", "CR", "ES", "NI", "PY", "RO", "TG", "TM", "XK");
 
     private static final String COMPONENT_ATTENTION = "attention";
+    private static final String COMPONENT_CITY = "city";
     private static final String COMPONENT_COUNTRY = "country";
     private static final String COMPONENT_COUNTRY_CODE = "country_code";
+    private static final String COMPONENT_COUNTY = "county";
+    private static final String COMPONENT_COUNTY_CODE = "county_code";
+    private static final String COMPONENT_DISTRICT = "district";
     private static final String COMPONENT_POSTCODE = "postcode";
     private static final String COMPONENT_ROAD = "road";
     private static final String COMPONENT_STATE = "state";
@@ -50,7 +54,8 @@ public class Formatter {
     private Map<String, Template> templates;
     private Map<String, String> componentAliases;
     private Map<String, List<String>> orderedComponents;
-    private Map<String, Map<String, String>> stateCodes;
+    private Map<String, Map<String, Set<String>>> stateCodes;
+    private Map<String, Map<String, Set<String>>> countyCodes;
 
     public Formatter() throws IOException {
         this(DEFAULT_PATH);
@@ -78,7 +83,7 @@ public class Formatter {
         components = ensureValidMap(components);
         Template config = prepareRendering(components);
 
-        String rendered = renderTemplate(components, chooseAddressTemplate(components, config));
+        String rendered = clean(renderTemplate(components, chooseAddressTemplate(components, config)));
 
         for (Template.Replacement replacement : config.postformatReplace()) {
             rendered = rendered.replaceAll(replacement.getFrom(), replacement.getTo());
@@ -93,6 +98,7 @@ public class Formatter {
 
         applyReplacements(components, config.replace());
         addStateCode(components);
+        addCountyCode(components);
         configureAttention(components);
         return config;
     }
@@ -105,9 +111,19 @@ public class Formatter {
         String cc = determineCountryCode(components);
         if (cc != null) components.put(COMPONENT_COUNTRY_CODE, cc);
 
-        for (String alias : componentAliases.keySet()) {
-            if (components.containsKey(alias) && !components.containsKey(componentAliases.get(alias))) {
-                components.put(componentAliases.get(alias), components.get(alias));
+        if (SMALL_DISTRICTS.contains(cc) && !components.containsKey("neighbourhood") && components.containsKey(COMPONENT_DISTRICT)) {
+            components.put("neighbourhood", components.remove(COMPONENT_DISTRICT));
+        } else if (!SMALL_DISTRICTS.contains(cc) && !components.containsKey("state_district") && components.containsKey(COMPONENT_DISTRICT)) {
+            components.put("state_district", components.remove(COMPONENT_DISTRICT));
+        }
+        for (String name : orderedComponents.keySet()) {
+            if (!components.containsKey(name)) {
+                for (String alias : orderedComponents.get(name)) {
+                    if (components.containsKey(alias)) {
+                        components.put(name, components.get(alias));
+                        break;
+                    }
+                }
             }
         }
 
@@ -150,28 +166,31 @@ public class Formatter {
     }
 
     private String clean(String in) {
-        in = in.replaceAll("\\s*\\n", "\n").replaceAll("  +", " ");
+        in = in.replaceAll("\\s*\\n", "\n").replaceAll("  +", " ").replaceAll(",\\s*,", ",");
 
         String[] lines = in.split("\n");
-        List<String> prevlines = new ArrayList<String>();
+        List<String> seenLines = new ArrayList<String>();
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < lines.length; i++) {
             String line = lines[i].trim();
             while (line.startsWith(",") || line.startsWith("-")) line = line.substring(1).trim();
             while (line.endsWith(",") || line.endsWith("-"))
                 line = line.substring(0, line.length() - 1).trim();
-            if (!prevlines.contains(line) && !line.isEmpty()) {
+            if (!seenLines.contains(line) && !line.isEmpty()) {
                 String[] split1 = line.split(",");
                 StringBuilder sb2 = new StringBuilder();
-                String prev = null;
+                Set<String> seenWords = new HashSet<String>();
                 for (String s : split1) {
-                    if (s.trim().equals(prev)) continue;
-                    if (prev != null) sb2.append(",");
-                    prev = s.trim();
+                    if (seenWords.contains(s.trim().toLowerCase())) continue;
+                    if (sb2.length() > 0) sb2.append(",");
+                    if (!s.trim().equalsIgnoreCase("new york")) {
+                        // New York is special
+                        seenWords.add(s.trim().toLowerCase());
+                    }
                     sb2.append(s);
                 }
-                prevlines.add(sb2.toString());
-                sb.append(sb2.toString()).append("\n");
+                seenLines.add(sb2.toString());
+                sb.append(sb2).append("\n");
             }
         }
 
@@ -181,6 +200,7 @@ public class Formatter {
     private String renderTemplate(Map<String, String> components, String template) {
         for (String s : components.keySet()) {
             template = template.replace("{{{" + s + "}}}", components.get(s));
+            template = template.replace("{{" + s + "}}", components.get(s));
         }
 
         template = template.replaceAll("\\{\\{\\{[^\\}]*\\}\\}\\}", "");
@@ -204,6 +224,7 @@ public class Formatter {
         }
 
         template = sb.toString();
+        template = template.replaceAll("\\{\\{[^\\}]*\\}\\}", "");
         return template;
     }
 
@@ -211,6 +232,8 @@ public class Formatter {
         if (components.containsKey(COMPONENT_POSTCODE)) {
             if (components.get(COMPONENT_POSTCODE).length() > 20 || Pattern.compile("\\d+;\\d+").matcher(components.get(COMPONENT_POSTCODE)).matches())
                 components.remove(COMPONENT_POSTCODE);
+            else if (components.get(COMPONENT_POSTCODE).matches("^(\\d{5}),\\d{5}.*"))
+                components.put(COMPONENT_POSTCODE, components.get(COMPONENT_POSTCODE).split(",", 2)[0]);
         }
 
         for (String key : new HashSet<String>(components.keySet())) {
@@ -247,11 +270,28 @@ public class Formatter {
 
         components.put(COMPONENT_COUNTRY_CODE, components.get(COMPONENT_COUNTRY_CODE).toUpperCase());
 
-        Map<String, String> mapping = stateCodes.get(components.get(COMPONENT_COUNTRY_CODE));
+        Map<String, Set<String>> mapping = stateCodes.get(components.get(COMPONENT_COUNTRY_CODE));
         if (mapping != null) {
-            for (Object s : mapping.keySet()) {
-                if (components.get(COMPONENT_STATE).toUpperCase().equals(mapping.get(s).toUpperCase())) {
-                    components.put(COMPONENT_STATE_CODE, String.valueOf(s));
+            for (String s : mapping.keySet()) {
+                if (mapping.get(s).contains(components.get(COMPONENT_STATE).toUpperCase())) {
+                    components.put(COMPONENT_STATE_CODE, s);
+                }
+            }
+        }
+    }
+
+    private void addCountyCode(Map<String, String> components) {
+        if (components.containsKey(COMPONENT_COUNTY_CODE)) return;
+        if (!components.containsKey(COMPONENT_COUNTY)) return;
+        if (!components.containsKey(COMPONENT_COUNTRY_CODE)) return;
+
+        components.put(COMPONENT_COUNTRY_CODE, components.get(COMPONENT_COUNTRY_CODE).toUpperCase());
+
+        Map<String, Set<String>> mapping = countyCodes.get(components.get(COMPONENT_COUNTRY_CODE));
+        if (mapping != null) {
+            for (String s : mapping.keySet()) {
+                if (mapping.get(s).contains(components.get(COMPONENT_COUNTY).toUpperCase())) {
+                    components.put(COMPONENT_COUNTY_CODE, s);
                 }
             }
         }
@@ -278,6 +318,18 @@ public class Formatter {
                 components.put(COMPONENT_COUNTRY, components.get(COMPONENT_STATE));
                 components.remove(COMPONENT_STATE);
             } catch (NumberFormatException ignored) {
+            }
+            if (components.get(COMPONENT_COUNTRY_CODE).equals("US")) {
+                Matcher unitedStatesMatcher = Pattern.compile("^united states", Pattern.CASE_INSENSITIVE).matcher(components.get(COMPONENT_STATE));
+                if (unitedStatesMatcher.matches()) {
+                    components.put(COMPONENT_STATE, unitedStatesMatcher.replaceAll("US"));
+                }
+                Matcher washingtonDcMatcher = Pattern.compile("^washington,? d\\.?c\\.?", Pattern.CASE_INSENSITIVE).matcher(components.get(COMPONENT_STATE));
+                if (washingtonDcMatcher.matches()) {
+                    components.put(COMPONENT_STATE_CODE, "DC");
+                    components.put(COMPONENT_STATE, "District of Columbia");
+                    components.put(COMPONENT_CITY, "Washington");
+                }
             }
         }
     }
@@ -339,7 +391,7 @@ public class Formatter {
             }
         }
 
-        componentAliases = new HashMap<String, String>();
+        componentAliases = new LinkedHashMap<String, String>();
         orderedComponents = new HashMap<String, List<String>>();
         for (Object o : loadFile(path + "/components.yaml")) {
             if (!(o instanceof Map)) continue;
@@ -352,13 +404,59 @@ public class Formatter {
             orderedComponents.put(name, aliases);
         }
 
-        //stateCodes = new HashMap<String, Map<String, String>>();
-        stateCodes = (Map<String, Map<String, String>>) loadFile(path + "/state_codes.yaml").iterator().next();
+        Map<String, Map<String, Object>> stateCodes = (Map<String, Map<String, Object>>) loadFile(path + "/state_codes.yaml").iterator().next();
+        this.stateCodes = new HashMap<String, Map<String, Set<String>>>();
+        for (String countryCode : stateCodes.keySet()) {
+            Map<String, Object> stateCodesOfCountry = stateCodes.get(countryCode);
+            Map<String, Set<String>> processedStateCodes = new HashMap<String, Set<String>>();
+            for (String stateCode : stateCodesOfCountry.keySet()) {
+                processedStateCodes.put(stateCode, new HashSet<String>());
+                Object val2 = stateCodesOfCountry.get(stateCode);
+                if (val2 instanceof String) {
+                    processedStateCodes.get(stateCode).add(((String)val2).toUpperCase());
+                } else if (val2 instanceof Map) {
+                    for (Object val3 : ((Map) val2).values()) {
+                        if (val3 instanceof String) {
+                            processedStateCodes.get(stateCode).add(((String)val3).toUpperCase());
+                        }
+                    }
+                }
+            }
+            this.stateCodes.put(countryCode, processedStateCodes);
+        }
 
+        Map<String, Map<String, Object>> countyCodes = (Map<String, Map<String, Object>>) loadFile(path + "/county_codes.yaml").iterator().next();
+        this.countyCodes = new HashMap<String, Map<String, Set<String>>>();
+        for (String countryCode : countyCodes.keySet()) {
+            Map<String, Object> stateCodesOfCountry = countyCodes.get(countryCode);
+            Map<String, Set<String>> processedStateCodes = new HashMap<String, Set<String>>();
+            for (String stateCode : stateCodesOfCountry.keySet()) {
+                processedStateCodes.put(stateCode, new HashSet<String>());
+                Object val2 = stateCodesOfCountry.get(stateCode);
+                if (val2 instanceof String) {
+                    processedStateCodes.get(stateCode).add(((String)val2).toUpperCase());
+                } else if (val2 instanceof Map) {
+                    for (Object val3 : ((Map) val2).values()) {
+                        if (val3 instanceof String) {
+                            processedStateCodes.get(stateCode).add(((String)val3).toUpperCase());
+                        }
+                    }
+                }
+            }
+            this.countyCodes.put(countryCode, processedStateCodes);
+        }
     }
 
     static Iterable<Object> loadFile(String filename) {
-        return new Yaml().loadAll(open(filename));
+        Yaml yaml = new Yaml(new SafeConstructor() {
+            @Override
+            protected Construct getConstructor(Node node) {
+                if (node.getTag() == Tag.BOOL) return yamlConstructors.get(Tag.STR);
+                return super.getConstructor(node);
+            }
+        });
+        yaml.addImplicitResolver(Tag.STR, Pattern.compile(".*"), null);
+        return yaml.loadAll(open(filename));
     }
 
     static InputStream open(String filename) {
