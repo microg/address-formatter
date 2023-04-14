@@ -13,6 +13,7 @@ String getMyVersionName() {
 
 group = "org.microg"
 version = getMyVersionName();
+description = 'Build human readable addresses from OpenCageData definitions'
 
 repositories {
     mavenCentral()
