@@ -1,14 +1,4 @@
-buildscript {
-    repositories {
-        jcenter()
-    }
-    dependencies {
-        classpath "org.kt3k.gradle.plugin:coveralls-gradle-plugin:2.3.1"
-    }
-}
-
 apply plugin: 'java'
-apply plugin: 'jacoco'
 apply plugin: 'maven-publish'
 apply plugin: 'signing'
 
@@ -25,12 +15,12 @@ group = "org.microg"
 version = getMyVersionName();
 
 repositories {
-    jcenter()
+    mavenCentral()
 }
 
 dependencies {
-    implementation 'org.yaml:snakeyaml:1.30'
-    testImplementation 'junit:junit:4.12'
+    implementation 'org.yaml:snakeyaml:1.33'
+    testImplementation 'junit:junit:4.13.2'
 }
 
 void createListing(String dirname) {
@@ -48,18 +38,6 @@ processResources.doLast {
 
 processTestResources.doLast {
     createListing("build/resources/test/org/microg/address/testcases/countries")
-}
-
-jacocoTestReport {
-    dependsOn test
-    reports {
-        xml.enabled true
-    }
-}
-
-apply plugin: "com.github.kt3k.coveralls"
-coveralls {
-    sourceDirs = files(subprojects.sourceSets.main.allSource.srcDirs).files.absolutePath
 }
 
 sourceCompatibility = JavaVersion.VERSION_1_6
