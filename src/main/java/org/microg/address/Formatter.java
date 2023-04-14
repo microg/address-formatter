@@ -300,9 +300,9 @@ public class Formatter {
     private void applyReplacements(Map<String, String> components, List<Template.Replacement> rules) {
         for (String component : components.keySet()) {
             for (Template.Replacement fromto : rules) {
-                if (fromto.getFrom().matches("^" + component + "=.*")) {
-                    if (fromto.getFrom().substring(component.length() + 1).equals(components.get(component))) {
-                        components.put(component, fromto.getTo());
+                if (fromto.getFrom().matches("^[a-z_]*=.*")) {
+                    if (fromto.getFrom().startsWith(component + "=")) {
+                        components.put(component, components.get(component).replaceAll(fromto.getFrom().substring(component.length() + 1), fromto.getTo()));
                     }
                 } else {
                     components.put(component, components.get(component).replaceAll(fromto.getFrom(), fromto.getTo()));
